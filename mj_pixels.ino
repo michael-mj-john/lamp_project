@@ -2,12 +2,13 @@
 #include "SPI.h"
 
 /*****************************************************************************
-  Pixel manipulation code by MJ
+  Lamp controller code by MJ
   
   Uses utility functions from Adafruit industries:
-
   Written by Limor Fried/Ladyada for Adafruit Industries.  
   BSD license, all text above must be included in any redistribution
+
+  Pin read interrupt and rotary encoder code adapted from Simon Merrett 
 
 *****************************************************************************/
 
@@ -15,61 +16,57 @@
 
 // GLOBALS
 
-// Pins for the rotary controller
-#define encoder0PinA  2
-#define encoder0PinB  4
+// Globals for rotary controller
+static int pinA = 2; // Our first hardware interrupt pin is digital pin 2
+static int pinB = 3; // Our second hardware interrupt pin is digital pin 3
+volatile byte aFlag = 0; // let's us know when we're expecting a rising edge on pinA to signal that the encoder has arrived at a detent
+volatile byte bFlag = 0; // let's us know when we're expecting a rising edge on pinB to signal that the encoder has arrived at a detent (opposite direction to when aFlag is set)
+volatile byte encoderPos = 0; //this variable stores our current value of encoder position. Change to int or uin16_t instead of byte if you want to record a larger range than 0-255
+volatile byte oldEncoderPos = 0; //stores the last encoder position value so we can compare to the current reading and see if it has changed (so we know when to print to the serial monitor)
+volatile byte reading = 0; //somewhere to store the direct values we read from our interrupt pins before checking to see if we have moved a whole detent
 
-// Encoder position. Must be 'volatile' because it's used as a hardware interrupt
-volatile unsigned int encoder0Pos = 0;
-unsigned int lastEncoderPos = 0; // will be used to detect movement
+// Globals for LED neopixels
+uint8_t dataPin  = 11;    // Yellow wire on Adafruit Pixels
+uint8_t clockPin = 12;    // Green wire on Adafruit Pixels
 int currentLED = 0; // LED currently lit
 int nextLED = 0;    // LED to be lit
 
-// Pins for the pixels
-uint8_t dataPin  = 11;    // Yellow wire on Adafruit Pixels
-uint8_t clockPin = 12;    // Green wire on Adafruit Pixels
-
-// Set the first variable to the NUMBER of pixels. 25 = 25 pixels in a row
+// construct global neopixel object "strip"
 Adafruit_WS2801 strip = Adafruit_WS2801(PIXELCOUNT, dataPin, clockPin);
 
 void setup() {
 
-/*flag for removal
-#if defined(__AVR_ATtiny85__) && (F_CPU == 16000000L)
-  clock_prescale_set(clock_div_1); // Enable 16 MHz on Trinket
-#endif
-*/
   // setup for rotary encoder
-  pinMode(encoder0PinA, INPUT); 
-  digitalWrite(encoder0PinA, HIGH);       // turn on pull-up resistor
-  pinMode(encoder0PinB, INPUT); 
-  digitalWrite(encoder0PinB, HIGH);       // turn on pull-up resistor
+  pinMode(pinA, INPUT_PULLUP); // set pinA as an input, pulled HIGH to the logic voltage (5V or 3.3V for most cases)
+  pinMode(pinB, INPUT_PULLUP); // set pinB as an input, pulled HIGH to the logic voltage (5V or 3.3V for most cases)
+  attachInterrupt(0,PinA,RISING); // set an interrupt on PinA, looking for a rising edge signal and executing the "PinA" Interrupt Service Routine (below)
+  attachInterrupt(1,PinB,RISING); // set an interrupt on PinB, looking for a rising edge signal and executing the "PinB" Interrupt Service Routine (below)
 
-  // set up interrupt; now encoder changes do not need to be part of loop
-  attachInterrupt(0, doEncoder, CHANGE);  // encoder pin on interrupt 0 - pin 2
-
+  // initialized LED strip. 
   strip.begin();
-//  Serial.begin(9600);
-  Serial.print("start\n"); // just to look at the serial output
 
   // Update LED contents, to start they are all 'off'
   strip.show();
+
+  Serial.begin(9600);
+  Serial.print("start\n"); 
+  
 }
 
 
 void loop() {
 
   nextLED = currentLED;
-  if( encoder0Pos > lastEncoderPos ) {
+  if( encoderPos > oldEncoderPos ) {
     nextLED++;
-    if( currentLED >= PIXELCOUNT ) { nextLED = 0; }
-    lastEncoderPos = encoder0Pos;
+    if( nextLED >= PIXELCOUNT ) { nextLED = 0; }
+    oldEncoderPos = encoderPos;
   }
     
-  if( encoder0Pos < lastEncoderPos ) {
+  if( encoderPos < oldEncoderPos ) {
     nextLED--;
-    lastEncoderPos = encoder0Pos;
-   if( currentLED < 0 ) { nextLED = PIXELCOUNT; }
+    oldEncoderPos = encoderPos;
+   if( nextLED < 0 ) { nextLED = PIXELCOUNT; }
   }
 
   strip.setPixelColor(currentLED, 0);
@@ -77,27 +74,11 @@ void loop() {
 
   currentLED = nextLED;
 
-  Serial.print(currentLED);
+  Serial.println(currentLED);
 
   strip.show();
 
 }
-
-// 
-void doEncoder() {
-  /* If pinA and pinB are both high or both low, it is spinning
-   * forward. If they're different, it's going backward.
-   */
-  if (digitalRead(encoder0PinA) == digitalRead(encoder0PinB)) {
-    encoder0Pos++;
-  } else {
-    encoder0Pos--;
-  }
-
-  // debug
-  Serial.println (encoder0Pos, DEC);
-}
-
 
 
 /* strip API reference
@@ -105,8 +86,6 @@ void doEncoder() {
  *  uint32_t c = strip.getPixelColor( n )
  *  uint16_t n = strip.numPixels();
  */
-
-
 
 
 /* Helper functions */
